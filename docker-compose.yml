@@ -1,0 +1,4 @@
+version: '3'
+services:
+  web:
+    build: ../../Downloads/uwsgi-nginx-flask-docker-master/uwsgi-nginx-flask-docker-master/example-flask-python3.8
