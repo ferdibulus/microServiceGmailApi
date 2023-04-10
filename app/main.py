@@ -16,9 +16,9 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-import google.auth
-from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from apiclient import discovery
+from httplib2 import Http
 
 app = Flask(__name__)
 cors = CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -41,6 +41,40 @@ class SentMail:
         self.to = to
         self.body = body
         self.date = date
+
+
+class GoogleForms:
+    def __init__(self, title, documentTitle, url, form):
+        self.title = title
+        self.documentTitle = documentTitle
+        self.url = url
+        self.form = form
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__,
+                          sort_keys=True, indent=4)
+
+
+class Form:
+    def __init__(self, Id, lastSubmitTime, responseName, items):
+        self.Id = Id
+        self.lastSubmitTime = lastSubmitTime
+        self.responseName = responseName
+        self.items = items
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__,
+                          sort_keys=True, indent=4)
+
+
+class Items:
+    def __init__(self, question, answer):
+        self.question = question
+        self.answer = answer
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__,
+                          sort_keys=True, indent=2)
 
 
 def main():
@@ -155,7 +189,10 @@ def getEmails(type):
             if type == "INBOX":
                 parts = payload.get('parts')[1]
             else:
-                parts = payload
+                if payload.get('parts') is not None:
+                    parts = payload.get('parts')[1]
+                else:
+                    parts = payload
             data = parts['body']['data']
             data = data.replace("-", "+").replace("_", "/")
             decoded_data = base64.b64decode(data)
@@ -235,6 +272,90 @@ def gmail_send_message(sender, to, message1, subject):
     return send_message
 
 
+def getGoogleFormsResponse(formId):
+    SCOPES = "https://www.googleapis.com/auth/forms.responses.readonly"
+    DISCOVERY_DOC = "https://forms.googleapis.com/$discovery/rest?version=v1"
+
+    # If no valid token found, we will create one.
+    creds = None
+
+    # The file getMailsToken contains the user access token.
+    # Check if it exists
+    if os.path.exists('credentials-tokens/googleFormResponseToken.pickle'):
+        # Read the token from the file and store it in the variable creds
+        with open('credentials-tokens/googleFormResponseToken.pickle', 'rb') as token:
+            creds = pickle.load(token)
+
+    # If credentials are not available or are invalid, ask the user to log in.
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file('credentials-tokens/credentails2.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+
+        # Save the access token in sendMailToken.pickle file for the next run
+        with open('credentials-tokens/googleFormResponseToken.pickle', 'wb') as token:
+            pickle.dump(creds, token)
+
+    service = build('forms', 'v1', credentials=creds)
+
+    # Prints the responses of your specified form:
+    form_id = '<YOUR_FORM_ID>'
+    resultForm = getGoogleForm(formId)
+    result = service.forms().responses().list(formId=formId).execute()
+
+    list1 = []
+    i = 0
+    for form in result['responses']:
+        listItem = []
+        for ans in form['answers']:
+            res = list(filter(lambda line: ans in line['questionItem']['question']['questionId'], resultForm['items']))
+            question = res[0]['title']
+            answer = form['answers'][ans]['textAnswers']['answers'][0]['value']
+            Item = Items(question, answer);
+            listItem.append(Item)
+        i += 1;
+        ItemFrom = Form(i, form['lastSubmittedTime'], 'Response ' + str(i), listItem)
+        list1.append(ItemFrom)
+    googleForms = GoogleForms(resultForm['info']['title'], resultForm['info']['documentTitle'],
+                              resultForm['responderUri'], list1)
+    return googleForms.toJSON().encode("utf-8")
+
+
+def getGoogleForm(formId):
+    SCOPES = "https://www.googleapis.com/auth/forms.body.readonly"
+
+    # If no valid token found, we will create one.
+    creds = None
+
+    # The file sendMailToken contains the user access token.
+
+    if os.path.exists('credentials-tokens/googleFormToken.pickle'):
+        # Read the token from the file and store it in the variable creds
+        with open('credentials-tokens/googleFormToken.pickle', 'rb') as token:
+            creds = pickle.load(token)
+
+    # If credentials are not available or are invalid, ask the user to log in.
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file('credentials-tokens/credentails2.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+
+        # Save the access token in sendMailToken.pickle file for the next run
+        with open('credentials-tokens/googleFormToken.pickle', 'wb') as token:
+            pickle.dump(creds, token)
+
+    service = build('forms', 'v1', credentials=creds)
+
+    # Prints the responses of your specified form:
+    form_id = '<YOUR_FORM_ID>'
+    result = service.forms().get(formId=formId).execute()
+    return result
+
+
 @app.route("/api/getInboxList")
 def inbox():
     return getEmails("INBOX")
@@ -243,6 +364,11 @@ def inbox():
 @app.route("/api/getSentList")
 def sentMails():
     return getEmails("SENT")
+
+
+@app.route("/api/getGoogleForms", methods=['POST'])
+def getGoogleForms():
+    return getGoogleFormsResponse(request.get_json()['formId'])
 
 
 @app.route("/api/sendMail", methods=['POST'])
