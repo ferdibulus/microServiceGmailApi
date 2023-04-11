@@ -68,9 +68,22 @@ class Form:
 
 
 class Items:
-    def __init__(self, question, answer):
+    def __init__(self, question, answer, typeOfFile):
         self.question = question
         self.answer = answer
+        self.typeOfFile = typeOfFile
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__,
+                          sort_keys=True, indent=2)
+
+
+class ItemsWithDoc:
+    def __init__(self, question, fileId, fileName, typeOfFile):
+        self.question = question
+        self.fileId = fileId
+        self.fileName = fileName
+        self.typeOfFile = typeOfFile
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__,
@@ -312,9 +325,16 @@ def getGoogleFormsResponse(formId):
         for ans in form['answers']:
             res = list(filter(lambda line: ans in line['questionItem']['question']['questionId'], resultForm['items']))
             question = res[0]['title']
-            answer = form['answers'][ans]['textAnswers']['answers'][0]['value']
-            Item = Items(question, answer);
-            listItem.append(Item)
+            if 'textAnswers' in form['answers'][ans]:
+                answer = form['answers'][ans]['textAnswers']['answers'][0]['value']
+                Item = Items(question, answer, "textAnswers")
+                listItem.append(Item)
+            else:
+                answer = form['answers'][ans]['fileUploadAnswers']['answers'][0]
+                field = answer['fileId']
+                fileName = answer['fileName']
+                ItemWithDoc = ItemsWithDoc(question, field, fileName, "FileUploadAnswers")
+                listItem.append(ItemWithDoc)
         i += 1;
         ItemFrom = Form(i, form['lastSubmittedTime'], 'Response ' + str(i), listItem)
         list1.append(ItemFrom)
